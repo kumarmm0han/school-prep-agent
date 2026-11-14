@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "school_prep_agent",
+  "project_id": "e37d970a-c751-4cab-8ba3-b674677de074"
+}
