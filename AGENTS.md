@@ -177,3 +177,13 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 <!-- END BEADS INTEGRATION -->
 
+## Agent skills
+
+### Issue tracker
+
+Work is tracked in beads (`bd`) — dependency-aware issues in `.beads/`, synced to the git remote under `refs/dolt/data` via Dolt. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
