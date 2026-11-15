@@ -16,13 +16,17 @@ _PENDING = {
 
 
 def main(argv: list[str]) -> int:
-    if not argv or argv[0] not in {"doctor", *_PENDING}:
-        print("usage: python -m pipeline <doctor|convert|index|summary|kb|verify>")
+    if not argv or argv[0] not in {"doctor", "status", *_PENDING}:
+        print("usage: python -m pipeline <doctor|status|convert|index|summary|kb|verify>")
         return 2
     if argv[0] == "doctor":
         from .doctor import cli
 
         return cli(["doctor"])
+    if argv[0] == "status":
+        from .status import run
+
+        return run(argv[1:])
     print(f"pipeline {argv[0]}: not implemented yet — {_PENDING[argv[0]]}")
     return 1
 

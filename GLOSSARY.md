@@ -24,7 +24,7 @@ _Avoid_: outline, table of contents, the chapter's own OCR'd head-list (that is 
 
 **Figure description**:
 The model-generated prose describing an illustration (reaction scheme, apparatus diagram), standing in for the picture in text-only contexts.
-_Avoid_: alt text, caption, OCR
+_Avoid_: alt text, OCR · _Note_: the conversion pipeline and Gate A call this line a **caption** / "caption line" per DESIGN S4.1/S5.4 — same thing.
 
 ### Knowledge graph
 
@@ -47,3 +47,17 @@ _Avoid_: table of contents (that is the book's page list), TOC
 **Knowledge base** (`knowledge.yaml`):
 The per-Book machine-readable semantic model — meta (sections→chapters map), thematic content (Theme, Term, plus discipline entities like substances and reactions), timeline, causal relations, cross-chapter relations, and the exam-harness block — the canonical structure the agentic skills consume.
 _Avoid_: ontology, graph database (the *relations* in it are graph-shaped; the artifact is a document)
+
+### Pipeline operations (step 1)
+
+**Gate A**:
+The automatic per-Chapter invariant pass (DESIGN S5.4, S6.4): body non-empty, at least one `##` heading, every image ref followed by a caption line, no `U+FFFD`, `syllabus[]` non-empty — plus the extended set (image blob files exist, `syllabus[]` count 2–15, well-formed heading hierarchy, no placeholder residue). A chapter that fails is recorded `qa_failed`; the batch continues (D4).
+_Avoid_: lint, unit test, quality check
+
+**qa_failed**:
+A run-record status: the Chapter converted fine but violated one or more Gate A invariants. Distinct from `fail` (conversion itself failed, e.g. service/transient error) and `skipped` (idempotent skip — nothing to do).
+_Avoid_: error, broken, rejected
+
+**Book dir**:
+The per-Book folder under `books/` the pipeline reads and writes (source PDFs, `chapter-*.md`, `img/`, `chapters.md`, `summary.md`, `knowledge.yaml`), one dir per Book (DESIGN S4).
+_Avoid_: repo root, output dir, book package
