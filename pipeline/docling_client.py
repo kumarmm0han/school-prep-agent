@@ -35,6 +35,11 @@ BACKOFF_SECONDS = 2.0
 
 CONVERT_PATH = "/v1/convert/file"
 
+# docling-serve 1.26 ImageRefMode (openapi probe 2026-11-15): how image payloads
+# ride in md_content: placeholder (<!-- image -->), embedded (data: URIs) or
+# referenced (URIs). Ticket 529 needs "embedded" to extract the blobs (S5 step 3).
+IMAGE_EXPORT_MODES = ("placeholder", "embedded", "referenced")
+
 CAPTION_PROMPT = (
     "Describe this technical illustration precisely for a chemistry student: "
     "every visible substance, apparatus, process step, labels and values."
@@ -89,16 +94,23 @@ def caption_api(ollama_url: str, vlm_model: str, *, timeout: int = CAPTION_TIMEO
     )
 
 
-def build_form(cfg: Config, pipeline: str = "standard") -> dict[str, str]:
+def build_form(
+    cfg: Config, pipeline: str = "standard", *, image_export_mode: str | None = None
+) -> dict[str, str]:
     """The frozen option set for ``/v1/convert/file`` (DESIGN D1 + S5.2).
 
     ``pipeline`` is the one chapter-overridable option: ``standard`` (default)
     or ``vlm`` (escape hatch). Booleans go as form strings, as in the proven
     markdown-wrapper (sample-code/main.py).
+
+    ``image_export_mode`` (ticket 529): optional docling-serve ImageRefMode. Omitted
+    (default) the form is exactly the s3c frozen set; ``"embedded"`` returns the
+    image payloads as data: URIs inside ``md_content``, which is the precondition
+    for blob extraction (DESIGN S5 step 3: "extract image blobs ... if embedded").
     """
     if pipeline not in ("standard", "vlm"):
         raise ValueError(f"unknown pipeline {pipeline!r} — supported: standard | vlm (D1 escape hatch)")
-    return {
+    form = {
         "to_format": "markdown",
         "force_ocr": "true",
         "do_table_structure": "true",
@@ -107,6 +119,14 @@ def build_form(cfg: Config, pipeline: str = "standard") -> dict[str, str]:
         "do_picture_description": "true",
         "picture_description_api": caption_api(cfg.ollama_url, cfg.vlm_model),
     }
+    if image_export_mode is not None:
+        if image_export_mode not in IMAGE_EXPORT_MODES:
+            raise ValueError(
+                f"unknown image_export_mode {image_export_mode!r} — supported: "
+                f"{' | '.join(IMAGE_EXPORT_MODES)} (docling-serve ImageRefMode)"
+            )
+        form["image_export_mode"] = image_export_mode
+    return form
 
 
 @dataclass(frozen=True)
@@ -128,6 +148,7 @@ def convert(
     *,
     cfg: Config | None = None,
     pipeline: str = "standard",
+    image_export_mode: str | None = None,
     timeout: int = REQUEST_TIMEOUT,
     max_retries: int = MAX_RETRIES,
     poster: PosterFunc | None = None,
@@ -135,13 +156,17 @@ def convert(
 ) -> ConversionResult:
     """Convert one chapter PDF via docling-serve; transient retries only.
 
+    ``image_export_mode`` (ticket 529) is optional; ``"embedded"`` requests the
+    image payloads as data: URIs in ``md_content`` so ``pipeline.images`` can
+    extract them (DESIGN S5 step 3). Omitted by default — the s3c frozen form.
+
     Raises ``DoclingError`` when a failure is non-transient (immediately) or
     when retries are exhausted (``transient=True``). Never retries a
     non-transient failure, and never a response-shape problem.
     """
     cfg = cfg if cfg is not None else resolve_config()
     url = cfg.docling_url.rstrip("/") + CONVERT_PATH
-    form = build_form(cfg, pipeline)
+    form = build_form(cfg, pipeline, image_export_mode=image_export_mode)
     post = poster if poster is not None else _default_poster
 
     for attempt in range(1, max_retries + 2):  # first try + up to max_retries retries

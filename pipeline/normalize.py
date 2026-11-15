@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import re
 
+from . import imgseq
+
 _HEADING = re.compile(r"^(#{1,6})(\s)")
 
 
@@ -37,30 +39,17 @@ def _fix_heading_levels(md: str) -> str:
     return "\n".join(bump(l) for l in lines)
 
 
-_IMG_REF = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")  # closing paren is part of the match (replacements must not re-add it)
+# Ref rewrite and seq numbering now live in the SHARED contract (ticket 529,
+# pipeline/imgseq.py) so blob extraction writes filenames that match rewritten
+# refs 1:1. imgseq owns the ref SHAPE; the structural pass reuses it anchored.
+_IMG_REF = imgseq.IMG_REF  # one regex, two consumers (single source of truth)
 
 
 def _rewrite_image_refs(md: str, chapter: int) -> str:
-    """Rewrite image refs to the contract path `img/ch<N>-<seq>.<ext>` (DESIGN S4.1).
-
-    New refs are numbered in order of appearance starting after the highest
-    already-conformed number, so conformed input is a fixed point (idempotent).
-    Original extension is kept when present, else `.png`.
-    """
-    state = {"next": 0}
-
-    def repl(m: re.Match) -> str:
-        alt, path = m.group(1), m.group(2)
-        conformed = re.fullmatch(rf"img/ch{chapter}-(\d{{3}})\.[A-Za-z0-9]{{1,5}}", path)
-        if conformed:
-            state["next"] = max(state["next"], int(conformed.group(1)))
-            return m.group(0)
-        state["next"] += 1
-        ext_m = re.search(r"\.([A-Za-z0-9]{1,5})$", path)
-        ext = ext_m.group(1) if ext_m else "png"
-        return f"![{alt}](img/ch{chapter}-{state['next']:03d}.{ext})"
-
-    return _IMG_REF.sub(repl, md)
+    """Rewrite image refs to the contract path `img/ch<N>-<seq>.<ext>` (DESIGN S4.1) —
+    delegated to the shared `imgseq` contract (ticket 529): order-of-appearance seq,
+    conformed refs kept, extension preserved else `.png`, idempotent fixed point."""
+    return imgseq.rewrite(md, chapter)
 
 
 _IMG_LINE = re.compile(r"^\s*" + _IMG_REF.pattern + r"\s*$")  # one source of truth: anchored _IMG_REF (code-review smell #3)
