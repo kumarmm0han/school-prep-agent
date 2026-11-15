@@ -164,6 +164,8 @@ services:
 ```
 `converter` is the only new service; everything else (Ollama, docling-serve, sqlite) is host-side or a file (D5, D9).
 
+> **Amendment (2026-11-15, Q13 — supersedes the `converter` service block above):** no service is built in this repo. `pipeline/` and `rag/` run **host-side Python** against the already-running docling-serve and Ollama, and `docling-serve` is treated strictly as an **external, never-replicated tracked dependency** (tracker ticket `school-prep-agent-x6h`, jointly managed): any VLM/model/timeout change is made in the `~/sandbox/docling-serve` project first, then re-pinned here (`.env.example` + §2), then the **Gate-0 pilot re-runs** on the next affected chapter before any batch continues. The tracker is a track, **never a gate** — no ticket may depend on it.
+
 ## 8. OpenCode harness (D6)
 
 The **deterministic CLI** is the product: `python -m pipeline {convert,index,summary,kb,verify}` and `python -m rag {ingest,retrieve}`. The OpenCode session is the **operator**: runs stages in order, reads `reports/`, drives Gates B/C (presents failures, applies fixes, re-runs validation), and signs off the Book. LLM calls from the *agent* are limited to Gates B/C review and any repair of `summary.md`/`knowledge.yaml` — never to silently bypass a gate. This keeps the whole thing **locally executable with or without an agent** (the original requirement).
@@ -173,7 +175,7 @@ The **deterministic CLI** is the product: `python -m pipeline {convert,index,sum
 1. `chapters.md` + `chapter-1..N.md` all `pass` Gate A; every image has a caption.
 2. `summary.md` approved (Gate B).
 3. `knowledge.yaml` validates Gate C, anchors resolve, `thematic` non-empty for entities the book genuinely contains.
-4. `rag/ingest` → `library.sqlite`; `rag/retrieve` returns chapter-correct hits for at least three hand-picked topical queries per chapter.
+4. `rag/ingest` → `library.sqlite`; the **per-chapter query pack** (top-3 derived from `syllabus[]`; fallback L2 LLM clean pass → L3 chap-00 TOC/headings → L4 human, every entry `source:`-tagged — see ADR-0004 scope clarification) must hit **its own chapter first**, per chapter, via `rag/retrieve` — sweep report in `reports/evals-sweep-<stamp>.md`.
 5. `reports/` contains the full run: what passed, what was quarantined, versions + hashes.
 
 ## 10. Deferred to step 2 (named, not designed)
