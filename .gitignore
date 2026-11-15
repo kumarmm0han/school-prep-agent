@@ -1,6 +1,17 @@
 
 # Beads / Dolt files (added by bd init)
 .dolt/
+#
+# Runtime artifacts (ws8): generated outputs stay out of git; only the dir markers are tracked
+logs/*
+!logs/.gitkeep
+reports/*
+!reports/.gitkeep
+data/
+__pycache__/
+*.pyc
+# Local env overrides (commit .env.example instead)
+.env
 *.db
 .beads-credential-key
 .beads/proxieddb/
