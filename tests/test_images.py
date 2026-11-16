@@ -8,16 +8,16 @@ ACs under test:
   - seq numbering shared with the normalizer (helper imported by both)
 Fail-loud clause (529): a ref whose blob is absent/undecodable is left unwritten and
 Gate A's blob-existence check (j99) then flags the chapter — never a silent drop.
-Plus the docling-serve client's optional image_export_mode (DESIGN S5 step 3:
-"extract image blobs ... if embedded" requires requesting embedded mode).
+
+Note (ADR-0005): under the current picture-free contract this extractor is a
+no-op (the md carries no data: URIs); it is the live path when ticket ezq
+re-enables embedded images — that is why the contract tests stay.
 """
 import base64
 import unittest
 from pathlib import Path
 
 from pipeline import gates, images, imgseq, normalize
-from pipeline.config import resolve_config
-from pipeline.docling_client import build_form
 
 PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16).decode()
 JPG = base64.b64encode(b"\xff\xd8\xff\xe0" + b"\x00" * 16).decode()
@@ -105,31 +105,6 @@ class ExtractTest(unittest.TestCase):
         self.assertIn("img/ch2-001.png", normalized)  # ref rewritten to the contract path
         violations = gates.gate_a(normalized, {"syllabus": ["a", "b"]}, self.book_dir)
         self.assertTrue(any("image blob" in v for v in violations), violations)
-
-
-class ClientImageModeTest(unittest.TestCase):
-    """The pipeline needs embedded mode (DESIGN S5 step 3); the s3c frozen form is the default."""
-
-    def setUp(self):
-        self.cfg = resolve_config({})
-
-    def test_default_form_is_the_frozen_set_without_image_export_mode(self):
-        form = build_form(self.cfg)
-        self.assertNotIn("image_export_mode", form)
-        self.assertEqual(
-            set(form),
-            {"to_format", "force_ocr", "do_table_structure", "include_images",
-             "pipeline", "do_picture_description", "picture_description_api"},
-        )
-
-    def test_embedded_mode_is_requestable(self):
-        self.assertEqual(build_form(self.cfg, image_export_mode="embedded")["image_export_mode"], "embedded")
-
-    def test_invalid_mode_rejected_naming_the_supported_set(self):
-        with self.assertRaises(ValueError) as ctx:
-            build_form(self.cfg, image_export_mode="base64")
-        self.assertIn("embedded", str(ctx.exception))
-        self.assertIn("placeholder", str(ctx.exception))
 
 
 if __name__ == "__main__":

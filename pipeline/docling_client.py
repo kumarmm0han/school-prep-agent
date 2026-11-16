@@ -2,9 +2,16 @@
 
 POSTs one chapter PDF to docling-serve ``/v1/convert/file`` (multipart) with the
 frozen option set: ``to_format=markdown``, ``force_ocr``, ``do_table_structure``,
-``include_images``, the ``standard`` pipeline (``vlm`` escape hatch overridable),
-picture-description via Ollama (``VLM_MODEL``, inner timeout 1200s, chemistry
-caption prompt). Request budget is 2700s (DESIGN S5.2).
+``include_images=false``, the ``standard`` pipeline (``vlm`` escape hatch
+overridable). Request budget is 2700s (DESIGN S5.2).
+
+**Owner decision 2026-11-15 (ADR-0005):** the book is text-focused for now — the
+picture-description parameters (``do_picture_description`` / ``picture_description_api``,
+which docling-serve 1.26 deprecates/gates anyway) and embedded image export are
+DEFERRED, so ``include_images=false`` and the markdown is picture-free (the
+``<!-- image -->`` residue is stripped by 1qm; Gate A's caption rule is vacuous until
+pictures are re-enabled). Re-enabling is ticket school-prep-agent-ezq, which carries
+the deferred shapes (caption prompt, VLM endpoint, custom-config gating).
 
 Retry contract (DESIGN S5.6; the POC ``converter.py`` token list is the
 reference, per ticket): at most ``MAX_RETRIES`` extra attempts,
@@ -18,32 +25,19 @@ the requests adapter is the single impure line in this module (mirrors doctor).
 """
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
 from typing import Callable
 
 from .config import Config, resolve_config
 
-# DESIGN S5.2: full convert request budget, incl. every picture-description call.
+# DESIGN S5.2: full convert request budget.
 REQUEST_TIMEOUT = 2700
-# DESIGN S5.2: picture_description_api.timeout (per inner Ollama call).
-CAPTION_TIMEOUT = 1200
 # DESIGN S5.6: "backoff 2s x 3".
 MAX_RETRIES = 3
 BACKOFF_SECONDS = 2.0
 
 CONVERT_PATH = "/v1/convert/file"
-
-# docling-serve 1.26 ImageRefMode (openapi probe 2026-11-15): how image payloads
-# ride in md_content: placeholder (<!-- image -->), embedded (data: URIs) or
-# referenced (URIs). Ticket 529 needs "embedded" to extract the blobs (S5 step 3).
-IMAGE_EXPORT_MODES = ("placeholder", "embedded", "referenced")
-
-CAPTION_PROMPT = (
-    "Describe this technical illustration precisely for a chemistry student: "
-    "every visible substance, apparatus, process step, labels and values."
-)
 
 # POC converter.py token list (ticket s3c): the only failures worth retrying.
 TRANSIENT_TOKENS = (
@@ -82,51 +76,27 @@ def is_transient(message: str) -> bool:
     return any(token in lowered for token in TRANSIENT_TOKENS)
 
 
-def caption_api(ollama_url: str, vlm_model: str, *, timeout: int = CAPTION_TIMEOUT) -> str:
-    """The ``picture_description_api`` JSON body (shape pinned by DESIGN S5.2)."""
-    return json.dumps(
-        {
-            "url": f"{ollama_url.rstrip('/')}/v1/chat/completions",
-            "params": {"model": vlm_model},
-            "timeout": timeout,
-            "prompt": CAPTION_PROMPT,
-        }
-    )
-
-
-def build_form(
-    cfg: Config, pipeline: str = "standard", *, image_export_mode: str | None = None
-) -> dict[str, str]:
-    """The frozen option set for ``/v1/convert/file`` (DESIGN D1 + S5.2).
+def build_form(cfg: Config, pipeline: str = "standard") -> dict[str, str]:
+    """The frozen option set for ``/v1/convert/file`` (DESIGN D1 + S5.2, ADR-0005 v2
+    per owner decision 2026-11-15).
 
     ``pipeline`` is the one chapter-overridable option: ``standard`` (default)
     or ``vlm`` (escape hatch). Booleans go as form strings, as in the proven
     markdown-wrapper (sample-code/main.py).
 
-    ``image_export_mode`` (ticket 529): optional docling-serve ImageRefMode. Omitted
-    (default) the form is exactly the s3c frozen set; ``"embedded"`` returns the
-    image payloads as data: URIs inside ``md_content``, which is the precondition
-    for blob extraction (DESIGN S5 step 3: "extract image blobs ... if embedded").
+    Picture content is deferred (ADR-0005): ``include_images=false`` keeps the
+    markdown picture-free. ``cfg`` is still accepted — it is the single source of
+    the convert endpoint — so the re-enable (ezq) only adds form fields.
     """
     if pipeline not in ("standard", "vlm"):
         raise ValueError(f"unknown pipeline {pipeline!r} — supported: standard | vlm (D1 escape hatch)")
-    form = {
+    return {
         "to_format": "markdown",
         "force_ocr": "true",
         "do_table_structure": "true",
-        "include_images": "true",
+        "include_images": "false",
         "pipeline": pipeline,
-        "do_picture_description": "true",
-        "picture_description_api": caption_api(cfg.ollama_url, cfg.vlm_model),
     }
-    if image_export_mode is not None:
-        if image_export_mode not in IMAGE_EXPORT_MODES:
-            raise ValueError(
-                f"unknown image_export_mode {image_export_mode!r} — supported: "
-                f"{' | '.join(IMAGE_EXPORT_MODES)} (docling-serve ImageRefMode)"
-            )
-        form["image_export_mode"] = image_export_mode
-    return form
 
 
 @dataclass(frozen=True)
@@ -148,7 +118,6 @@ def convert(
     *,
     cfg: Config | None = None,
     pipeline: str = "standard",
-    image_export_mode: str | None = None,
     timeout: int = REQUEST_TIMEOUT,
     max_retries: int = MAX_RETRIES,
     poster: PosterFunc | None = None,
@@ -156,17 +125,13 @@ def convert(
 ) -> ConversionResult:
     """Convert one chapter PDF via docling-serve; transient retries only.
 
-    ``image_export_mode`` (ticket 529) is optional; ``"embedded"`` requests the
-    image payloads as data: URIs in ``md_content`` so ``pipeline.images`` can
-    extract them (DESIGN S5 step 3). Omitted by default — the s3c frozen form.
-
     Raises ``DoclingError`` when a failure is non-transient (immediately) or
     when retries are exhausted (``transient=True``). Never retries a
     non-transient failure, and never a response-shape problem.
     """
     cfg = cfg if cfg is not None else resolve_config()
     url = cfg.docling_url.rstrip("/") + CONVERT_PATH
-    form = build_form(cfg, pipeline, image_export_mode=image_export_mode)
+    form = build_form(cfg, pipeline)
     post = poster if poster is not None else _default_poster
 
     for attempt in range(1, max_retries + 2):  # first try + up to max_retries retries

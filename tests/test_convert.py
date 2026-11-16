@@ -157,8 +157,11 @@ class ConvertEngineTest(unittest.TestCase):
         self.assertEqual(data["syllabus"], ["Atom, molecule and ion", "Chemical formulae",
                                             "Balanced chemical equations"])
         self.assertEqual(data["title"], "Chapter One: Basic Concepts")
-        # the request actually asked for embedded images (S5 step 3 precondition, 529)
-        self.assertEqual(poster.form_log[0]["image_export_mode"], "embedded")
+        # ADR-0005 frozen contract reaches the wire: OCR + tables, picture-free
+        form = poster.form_log[0]
+        self.assertEqual(form["include_images"], "false")
+        self.assertNotIn("do_picture_description", form)
+        self.assertNotIn("picture_description_api", form)
 
     def test_selecting_a_single_chapter_only_converts_that_one(self):
         poster = Poster({"chap-2.pdf": PAYLOAD_OK})

@@ -1,31 +1,25 @@
 """Seam: docling-serve client — pure retry/shape judgment over an injected poster.
 
-Ticket school-prep-agent-s3c acceptance criteria (unit half):
-  - exact form params incl picture_description_api (DESIGN S5.2 literal)
+Ticket school-prep-agent-s3c acceptance criteria (unit half), under the ADR-0005
+contract (owner decision 2026-11-15, picture content deferred):
+  - exact form params (frozen OCR set, incl. include_images=false)
   - transient-fail-then-succeed returns
   - non-transient raises at the first try (no retry, no backoff)
 The live AC (chap-1 smoke, non-empty md_content) runs against the real stack
 via the default poster — not in this file.
 """
-import json
 import unittest
 import urllib.error
 
 from pipeline.config import resolve_config
 from pipeline.docling_client import (
     BACKOFF_SECONDS,
-    CAPTION_TIMEOUT,
     MAX_RETRIES,
     REQUEST_TIMEOUT,
     DoclingError,
     build_form,
     convert,
     is_transient,
-)
-
-EXPECTED_PROMPT = (
-    "Describe this technical illustration precisely for a chemistry student: "
-    "every visible substance, apparatus, process step, labels and values."
 )
 
 PAYLOAD_OK = {"document": {"md_content": "# chapter one\n\nbody text"}, "pages": 12}
@@ -59,7 +53,7 @@ class Sleeper:
 
 
 class FormTest(unittest.TestCase):
-    """AC: exact form params incl picture_description_api."""
+    """AC: exact form params — the ADR-0005 OCR set, picture description deferred."""
 
     def setUp(self):
         self.cfg = resolve_config({})  # defaults per DESIGN S2 / _FIELDS
@@ -74,34 +68,25 @@ class FormTest(unittest.TestCase):
                 "do_table_structure",
                 "include_images",
                 "pipeline",
-                "do_picture_description",
-                "picture_description_api",
             },
         )
         self.assertEqual(
-            {k: form[k] for k in ("to_format", "force_ocr", "do_table_structure", "include_images", "pipeline", "do_picture_description")},
+            form,
             {
                 "to_format": "markdown",
                 "force_ocr": "true",
                 "do_table_structure": "true",
-                "include_images": "true",
+                "include_images": "false",
                 "pipeline": "standard",
-                "do_picture_description": "true",
             },
         )
 
-    def test_picture_description_api_exact(self):
-        caption = json.loads(build_form(self.cfg)["picture_description_api"])
-        self.assertEqual(
-            caption,
-            {
-                "url": f"{self.cfg.ollama_url.rstrip('/')}/v1/chat/completions",
-                "params": {"model": self.cfg.vlm_model},
-                "timeout": CAPTION_TIMEOUT,
-                "prompt": EXPECTED_PROMPT,
-            },
-        )
-        self.assertEqual(CAPTION_TIMEOUT, 1200)  # DESIGN S5.2 literal
+    def test_picture_description_params_are_deferred_not_sent(self):
+        # ADR-0005 (owner decision 2026-11-15): book is text-focused for now;
+        # the deferred shapes live in ticket ezq / DESIGN S5.2, not in this form
+        form = build_form(self.cfg)
+        self.assertNotIn("do_picture_description", form)
+        self.assertNotIn("picture_description_api", form)
 
     def test_vlm_escape_hatch_is_the_only_variation(self):
         form = build_form(self.cfg, pipeline="vlm")
@@ -116,11 +101,6 @@ class FormTest(unittest.TestCase):
             build_form(self.cfg, pipeline="fancy")
         self.assertIn("standard", str(ctx.exception))
         self.assertIn("vlm", str(ctx.exception))
-
-    def test_trailing_slash_on_ollama_url_not_doubled(self):
-        cfg = resolve_config({"OLLAMA_URL": "http://localhost:11434/"})
-        caption = json.loads(build_form(cfg)["picture_description_api"])
-        self.assertEqual(caption["url"], "http://localhost:11434/v1/chat/completions")
 
 
 class TransientTokenTest(unittest.TestCase):

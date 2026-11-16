@@ -3,8 +3,9 @@
 ``python -m pipeline convert --book-dir DIR [--chapter N] [--force] [--pipeline standard|vlm]``
 
 Wires the step-1 pipeline per chapter:
-  client (s3c, ``image_export_mode=embedded``) -> img/ blob extraction (529) ->
-  normalize (1qm) -> title + syllabus capture (5x7) -> front matter (5x7) ->
+  client (s3c, picture-free OCR contract per ADR-0005) -> img/ blob extraction
+  (529, conditional no-op until pictures are re-enabled) -> normalize (1qm) ->
+  title + syllabus capture (5x7) -> front matter (5x7) ->
   Gate A (j99) -> chapter-N.md + run records (j99 reports).
 
 Per-chapter isolation (D4): one failure NEVER aborts the batch — every chapter lands a
@@ -151,7 +152,6 @@ def process_chapter(
             pdf.read_bytes(),
             cfg=cfg,
             pipeline=pipeline,
-            image_export_mode="embedded",
             poster=poster,
             sleeper=sleeper,
         )
@@ -160,7 +160,9 @@ def process_chapter(
     timings = {"convert_s": round(time.monotonic() - t0, 1)}
 
     md_raw = result.md_content
-    images.extract(md_raw, chapter, book_dir)  # 529: img/ blobs named by the shared imgseq contract
+    # 529 (DESIGN S5 step 3, conditional "if embedded"): no-op under ADR-0005's
+    # picture-free contract; the mechanism re-activates when ezq lands embedded refs.
+    images.extract(md_raw, chapter, book_dir)
     body = normalize.normalize(md_raw, chapter=chapter)
     items, _confidence = syllabus.extract_head_list(body)
     title = title_of(body, chapter)
