@@ -1,5 +1,6 @@
 # Agent Instructions
 
+
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
 > **Architecture in one line:** Issues live in a local Dolt database
@@ -177,6 +178,25 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 <!-- END BEADS INTEGRATION -->
 
+## Session & GPU Discipline
+
+This host is one GPU: the agent's own Ollama inference and the pipeline's
+models share it. Long conversions started inside a session starve the model
+that is answering right now. So:
+
+- **Never run the conversion pipeline inline in a session.** Use
+  `scripts/convert_batch.sh start …` (detached, single-instance, doctor
+  preflight), then hand off and check later with
+  `scripts/convert_batch.sh status` (+ `reports/`). `--foreground` is for
+  debugging one chapter only.
+- **One fresh session per task** (fresh worktree for long/risky work); run
+  `/compact` before pivoting topics in a live session.
+- **Keep context lean:** grep/slice files instead of re-reading big ones you
+  already read; delegate wide reads to subagents; don't grow this file with
+  task detail (that's bead-ticket or `docs/` territory).
+
+Details + anti-patterns: `docs/agents/session-hygiene.md`.
+
 ## Agent skills
 
 ### Issue tracker
@@ -186,4 +206,32 @@ Work is tracked in beads (`bd`) — dependency-aware issues in `.beads/`, synced
 ### Domain docs
 
 Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Session & GPU discipline
+
+Pipeline conversions run detached via `scripts/convert_batch.sh` — never inline in a
+coding session; fresh session/worktree per task; compaction and lean-context rules in
+`docs/agents/session-hygiene.md`.
+
+
+
+# Agent Instructions
+
+Project-specific rules above, including the Beads
+workflow and Git policy, take precedence over
+these general instructions.
+
+- Read only files relevant to the task.
+- Follow the existing project architecture and patterns.
+- Prefer Python standard-library solutions.
+- Make small, focused changes.
+- Avoid unrelated refactoring.
+- Do not modify .env or secret files.
+- Modify .env.example only when pinning a value is
+  an explicit task acceptance criterion.
+- Run targeted tests after changing code.
+- Report changed files and test results.
+- Ask before destructive operations.
+- For large changes, establish a short plan first.
+
 

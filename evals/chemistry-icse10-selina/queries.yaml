@@ -1,0 +1,26 @@
+# Gate-0 pilot (school-prep-agent-nv8, DESIGN S9.4): per-chapter eval query pack, chapter 1.
+# Derivation per entry (S9.4 chain): L1 = top-3 of syllabus[] (u1k clean pass applied,
+# prompt clean-syllabus/v1); slot 3 fell to L3 because the syllabus has 2 entries —
+# the chap-00 TOC rule is ticket plq (not yet landed). Every entry is source:-tagged.
+# nnw will re-derive the full per-chapter pack + run the retrieval sweep over it.
+book_id: chemistry-icse10-selina
+chapter: 1
+generated_at: 2026-11-22T02:50:46Z
+queries:
+  - id: chem-icse10-ch01-q01
+    text: "Periodic properties and their variations in groups and periods"
+    derivation: L1
+    source: "syllabus[0] — u1k clean pass (prompt clean-syllabus/v1, model qwen3.8:27b), run report convert-20261122T004716Z.jsonl"
+  - id: chem-icse10-ch01-q02
+    text: "Periodicity on the basis of atomic number for elements"
+    derivation: L1
+    source: "syllabus[1] — u1k clean pass (prompt clean-syllabus/v1, model qwen3.8:27b), run report convert-20261122T004716Z.jsonl"
+  - id: chem-icse10-ch01-q03
+    text: "Periodic Table, Periodic Properties and Variations of Properties"
+    derivation: L3
+    source: "chapter structural heading (L1 syllabus exhausted at 2 entries; chap-00 TOC rule pending ticket plq)"
+provenance:
+  source_pdf: Selina-Concise-Chemistry-10-chap-1.pdf
+  sha256: 35c673757795b33ec9fa32fb6dc8012bed1fcae24368fa28f1740af6eff8666f
+  pipeline: standard
+  converted_at: 2026-11-22T00:50:02Z

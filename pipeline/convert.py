@@ -5,8 +5,8 @@
 Wires the step-1 pipeline per chapter:
   client (s3c, picture-free OCR contract per ADR-0005) -> img/ blob extraction
   (529, conditional no-op until pictures are re-enabled) -> normalize (1qm) ->
-  title + syllabus capture (5x7) -> front matter (5x7) ->
-  Gate A (j99) -> chapter-N.md + run records (j99 reports).
+  title + syllabus capture (5x7) -> low-confidence LLM clean pass (u1k, quarantine-safe)
+  -> front matter (5x7) -> Gate A (j99) -> chapter-N.md + run records (j99 reports).
 
 Per-chapter isolation (D4): one failure NEVER aborts the batch — every chapter lands a
 record (pass | qa_failed | fail | skipped) and only the process exit code aggregates the
@@ -35,7 +35,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import docling_client, frontmatter, gates, images, normalize, report, syllabus
+from . import docling_client, frontmatter, gates, images, normalize, report, syllabus, syllabus_clean
 from .config import resolve_config
 
 _CHAP = re.compile(r"chap-(\d+)\.pdf$", re.IGNORECASE)
@@ -132,6 +132,7 @@ def process_chapter(
     force: bool = False,
     poster=None,
     sleeper=time.sleep,
+    chat=None,
 ) -> dict:
     """One chapter end-to-end. Expected chapter-level failures become ``fail``/``qa_failed``
     records (D4 isolation) — only an un-wireable engine defect escapes, and ``run_batch``
@@ -164,7 +165,26 @@ def process_chapter(
     # picture-free contract; the mechanism re-activates when ezq lands embedded refs.
     images.extract(md_raw, chapter, book_dir)
     body = normalize.normalize(md_raw, chapter=chapter)
-    items, _confidence = syllabus.extract_head_list(body)
+    items, confidence = syllabus.extract_head_list(body)
+    # DESIGN S5 low-confidence handoff (u1k): one LLM clean pass (LLM_MODEL) + deterministic
+    # validation; quarantine on ANY violation — the captured list stands, nothing is
+    # silently substituted, and the LLM outage/failure never sinks the chapter (D4).
+    clean_rec = None
+    if confidence == "low":
+        res = syllabus_clean.clean(items, body, cfg=cfg, chat=chat)
+        clean_rec = {
+            "applied": res.applied,
+            "model": res.model,
+            "prompt": res.prompt,
+            "captured_items": len(res.captured),
+            "cleaned_items": len(res.items),
+            "violations": list(res.violations),
+            # quarantine evidence (u1k): the LLM's raw response when REJECTED, bounded
+            # (300 chars) so report JSONL stays light; None when applied (nothing to quarantine)
+            "raw_excerpt": (res.raw[:300] if (not res.applied and res.raw is not None) else None),
+        }
+        if res.applied:
+            items = list(res.items)
     title = title_of(body, chapter)
 
     if items:
@@ -189,7 +209,10 @@ def process_chapter(
         out.write_text(body, encoding="utf-8")
         fm_dict, body_for_gate = {"syllabus": []}, body
 
-    return gates.evaluate_chapter(chapter, body_for_gate, fm_dict, book_dir, timings=timings)
+    record = gates.evaluate_chapter(chapter, body_for_gate, fm_dict, book_dir, timings=timings)
+    if clean_rec is not None:
+        record["clean_pass"] = clean_rec  # u1k: prompt version + quarantine evidence travel with the record
+    return record
 
 
 def run_batch(
@@ -201,6 +224,7 @@ def run_batch(
     cfg=None,
     poster=None,
     sleeper=time.sleep,
+    chat=None,
     subject: str | None = None,
     board: str | None = None,
     class_: int | None = None,
@@ -216,7 +240,7 @@ def run_batch(
             records.append(
                 process_chapter(
                     n, pdf, Path(book_dir), (subject, board, class_),
-                    cfg=cfg, pipeline=pipeline, force=force, poster=poster, sleeper=sleeper,
+                    cfg=cfg, pipeline=pipeline, force=force, poster=poster, sleeper=sleeper, chat=chat,
                 )
             )
         except Exception as exc:  # an engine defect must not sink the batch (D4) — record, continue
@@ -230,6 +254,7 @@ def run(
     env: dict | None = None,
     poster=None,
     sleeper=time.sleep,
+    chat=None,
     reports_dir: str | Path = "reports",
     stamp: str | None = None,
 ) -> int:
@@ -257,6 +282,7 @@ def run(
             cfg=resolve_config(env),
             poster=poster,
             sleeper=sleeper,
+            chat=chat,
         )
     except ValueError as exc:
         print(f"convert: {exc}")

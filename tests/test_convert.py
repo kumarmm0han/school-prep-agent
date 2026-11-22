@@ -184,17 +184,100 @@ class ConvertEngineTest(unittest.TestCase):
         self.cli("--chapter", "1", poster=again, stamp="STALE-b")
         self.assertEqual(len(again.calls), 1)  # provenance.sha256 no longer matches -> re-convert
 
-    def test_missing_syllabus_is_qa_failed_and_waits_for_the_clean_pass(self):
+    def test_missing_syllabus_is_qa_failed_and_the_clean_pass_verdict_is_recorded(self):
+        # u1k wired in: the low-confidence handoff now CALLS the clean pass; the
+        # mock LLM gives up ("[]") -> the band quarantines it (give-up never
+        # applies); Gate A stays authoritative over the chapter verdict.
         poster = Poster({"chap-1.pdf": {"document": {"md_content": MD_NO_SYLLABUS}}})
-        code = self.cli("--chapter", "1", poster=poster, stamp="NOSYL")
+        calls: list[tuple] = []
+
+        def chat(url, model, messages, timeout):
+            calls.append((model, len(messages)))
+            return "[]"  # a give-up answer
+
+        code = self.cli("--chapter", "1", poster=poster, chat=chat, stamp="NOSYL")
         recs = self.records("NOSYL")
         self.assertEqual(code, 1)
         self.assertEqual(recs[0]["status"], "qa_failed")
         self.assertTrue(any("syllabus" in v for v in recs[0]["violations"]))
-        # body written for inspection (u1k handoff), and NOT up-to-date (must re-convert after a fix)
+        # body written for inspection, and NOT up-to-date (must re-convert after a fix)
         self.assertTrue((self.book / "chapter-1.md").is_file())
         self.assertFalse(convert.is_up_to_date(self.book / "chapter-1.md",
                                                self.book / "Selina-Concise-Chemistry-10-chap-1.pdf"))
+        # u1k record: the pass ran, was QUARANTINED with a count violation, and the
+        # prompt version + raw response travel with the report record
+        self.assertEqual(len(calls), 1)
+        cp = recs[0]["clean_pass"]
+        self.assertFalse(cp["applied"])
+        self.assertEqual(cp["cleaned_items"], 0)
+        self.assertEqual(cp["prompt"], "clean-syllabus/v1")
+        self.assertTrue(any(v.startswith("count:") for v in cp["violations"]))
+        self.assertEqual(cp["raw_excerpt"], "[]")
+
+    def test_low_confidence_capture_is_cleaned_and_the_result_is_recorded(self):
+        # u1k (DESIGN S5 low-confidence path): a 1-item capture (below the 2-item floor)
+        # triggers the clean pass; VALID grounded output replaces the capture in the
+        # front matter and the verdict + prompt version travel with the record.
+        md_low = (
+            "## Chapter Two: Electrolysis\n\n"
+            "### Syllabus\n"
+            "- Conductance of electrolytes\n\n"
+            "### Body\n\n"
+            "Conductance of electrolytes, ionic mobility and the electrochemical series.\n"
+        )
+        poster = Poster({"chap-1.pdf": {"document": {"md_content": md_low}}})
+        calls: list[tuple] = []
+
+        def chat(url, model, messages, timeout):
+            calls.append(model)
+            return json.dumps(
+                ["Conductance of electrolytes", "Ionic mobility", "Electrochemical series"]
+            )
+
+        code = self.cli("--chapter", "1", poster=poster, chat=chat, stamp="CLEAN")
+        self.assertEqual(code, 0)
+        recs = self.records("CLEAN")
+        self.assertEqual(recs[0]["status"], "pass")
+        data, _ = parse_frontmatter((self.book / "chapter-1.md").read_text(encoding="utf-8"))
+        self.assertEqual(
+            data["syllabus"],
+            ["Conductance of electrolytes", "Ionic mobility", "Electrochemical series"],
+        )
+        self.assertEqual(calls, [self.cfg.llm_model])  # LLM_MODEL, exactly one chat call
+        cp = recs[0]["clean_pass"]
+        self.assertTrue(cp["applied"])
+        self.assertEqual(cp["captured_items"], 1)
+        self.assertEqual(cp["cleaned_items"], 3)
+        self.assertEqual(cp["prompt"], "clean-syllabus/v1")
+        self.assertEqual(cp["model"], self.cfg.llm_model)
+        self.assertEqual(cp["violations"], [])
+
+    def test_quarantined_clean_pass_keeps_captured_and_records_violations(self):
+        # u1k AC "invalid output is quarantined not applied": the mock LLM returns
+        # a fenced (non-strict) response -> whole list rejected, chapter still fails
+        # Gate A (captured stands, empty-ish), violations recorded for the human.
+        md_low = (
+            "## Chapter Two: Electrolysis\n\n"
+            "### Syllabus\n"
+            "- Conductance of electrolytes\n\n"
+            "### Body\n\n"
+            "Conductance of electrolytes and ionic mobility.\n"
+        )
+        poster = Poster({"chap-1.pdf": {"document": {"md_content": md_low}}})
+
+        def chat(url, model, messages, timeout):
+            return "```json\n[\"Conductance of electrolytes\"]\n```"
+
+        code = self.cli("--chapter", "1", poster=poster, chat=chat, stamp="QUAR")
+        recs = self.records("QUAR")
+        self.assertEqual(code, 1)
+        self.assertEqual(recs[0]["status"], "qa_failed")
+        cp = recs[0]["clean_pass"]
+        self.assertFalse(cp["applied"])
+        self.assertEqual(cp["cleaned_items"], 0)
+        self.assertTrue(any("strict-JSON" in v for v in cp["violations"]))
+        # the quarantine evidence (LLM raw response, bounded) is retained in the record
+        self.assertIn("json", cp["raw_excerpt"])
 
     def test_book_meta_from_the_design_layout(self):
         self.assertEqual(convert.book_meta(self.book), ("Chemistry", "ICSE", 10))
